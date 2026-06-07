@@ -2,6 +2,8 @@
 
 **[Live Demo →](https://trippulse.vercel.app)** &nbsp;|&nbsp; Built for the [SpacetimeDB](https://spacetimedb.com) Hackathon
 
+[![TripPulse Demo](https://cdn.loom.com/sessions/thumbnails/e7b891daa2a5492ab4c41b0e3899ac2f-with-play.gif)](https://www.loom.com/share/e7b891daa2a5492ab4c41b0e3899ac2f)
+
 TripPulse is a real-time collaborative trip planner powered by **SpacetimeDB** — a serverless database that combines your database, server logic, and real-time sync into a single Rust module. No separate backend, no WebSocket glue code, no REST API boilerplate. SpacetimeDB handles all of it.
 
 Plan trips together with friends — vote on places, generate AI-optimized day-by-day itineraries, and track your journey live, all synced in real time across everyone in the trip.
