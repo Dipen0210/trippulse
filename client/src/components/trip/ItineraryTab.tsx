@@ -76,7 +76,7 @@ interface Props {
 }
 
 export default function ItineraryTab({
-  trip, totalDays, detail, userName, isOwner,
+  trip, totalDays, detail, isOwner,
   autoMode, onAutoModeConsumed,
   proposals, myIdentity,
   onProposePlace, onVotePlace, onRemoveVote, onRemoveProposal, onClearProposals,
@@ -96,8 +96,6 @@ export default function ItineraryTab({
   // Ticking clock — drives the per-recommendation countdown + deadline resolution.
   const [now, setNow] = useState(() => Date.now())
 
-  // True once the user picks the pure-AI path — hides the group-vote UI
-  const [aiModeSelected, setAiModeSelected] = useState(false)
 
   const hasPlan = detail.places.length > 0
   const dayPlaces = detail.places.filter(p => p.day === selectedDay)
@@ -176,7 +174,6 @@ export default function ItineraryTab({
   }
 
   const runGenerate = async () => {
-    setAiModeSelected(true)
     setConfirmReplace(false)
     setGenerating(true)
     setAiError('')
@@ -323,14 +320,6 @@ export default function ItineraryTab({
     if (winningCount > 0 || tieCount > 0) runGenerateFromPlaces()
     else runGenerate()
   }
-
-  const generateLabel = generating
-    ? 'Planning…'
-    : hasPlan
-      ? 'Regenerate plan'
-      : (winningCount > 0 || tieCount > 0)
-        ? `Generate plan · ${winningCount} pick${winningCount !== 1 ? 's' : ''}`
-        : 'AI plan my trip'
 
   // ── Handle plan mode passed from the create flow ──────────────────────────
   const autoHandled = useRef(false)
