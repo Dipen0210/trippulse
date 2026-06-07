@@ -1,0 +1,31 @@
+# Node / npm
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+
+# Vite
+client/dist/
+client/node_modules/
+
+# Rust / Cargo
+server/target/
+target/
+
+# SpacetimeDB generated bindings (regenerate via spacetime generate)
+client/src/module_bindings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
