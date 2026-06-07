@@ -1,6 +1,10 @@
 # TripPulse
 
-A real-time collaborative trip planner built with SpacetimeDB and React. Plan trips together with friends — add itinerary items, discover places on a map, and get AI-generated suggestions, all synced live across everyone in the trip.
+> **Built for the [SpacetimeDB](https://spacetimedb.com) Hackathon**
+
+TripPulse is a real-time collaborative trip planner powered by **SpacetimeDB** — a serverless database that combines your database, server logic, and real-time sync into a single Rust module. No separate backend, no WebSocket glue code, no REST API boilerplate. SpacetimeDB handles all of it.
+
+Plan trips together with friends — add itinerary items, discover places on a map, and get AI-generated suggestions, all synced live across everyone in the trip.
 
 ## Features
 
@@ -88,6 +92,20 @@ npm run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173).
+
+## Why SpacetimeDB?
+
+Traditional real-time apps require stitching together a database, an application server, and a WebSocket layer. SpacetimeDB collapses all three into a single Rust module:
+
+- **Reducers** replace REST endpoints — write plain Rust functions, SpacetimeDB exposes them as transactional RPC calls
+- **Tables** are defined in Rust with `#[spacetimedb::table]` and are instantly queryable via SQL over HTTP
+- **Real-time sync** is built-in — clients subscribe to table changes without any extra infrastructure
+- **Identity** is first-class — every client gets a cryptographic identity on first connection
+
+TripPulse uses SpacetimeDB's HTTP REST API directly from React:
+- `POST /v1/identity` — create or restore a user identity
+- `POST /v1/database/{module}/reducer/{name}` — call any reducer
+- `POST /v1/database/{module}/sql` — run SQL queries against live tables
 
 ## SpacetimeDB Schema
 
