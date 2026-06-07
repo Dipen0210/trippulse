@@ -1,6 +1,6 @@
 # TripPulse
 
-> **Built for the [SpacetimeDB](https://spacetimedb.com) Hackathon**
+**[Live Demo →](https://trippulse.vercel.app)** &nbsp;|&nbsp; Built for the [SpacetimeDB](https://spacetimedb.com) Hackathon
 
 TripPulse is a real-time collaborative trip planner powered by **SpacetimeDB** — a serverless database that combines your database, server logic, and real-time sync into a single Rust module. No separate backend, no WebSocket glue code, no REST API boilerplate. SpacetimeDB handles all of it.
 
