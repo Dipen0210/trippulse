@@ -2,12 +2,12 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Plus, Sparkles, CheckCircle, Circle, Trash2, MapPin, X, Loader, Clock, Ticket,
   ExternalLink, Lightbulb, ArrowDown, AlertTriangle, Plane, Train, Bus, Car, Ship,
-  Navigation, ArrowLeftRight, RefreshCw, ThumbsUp, ThumbsDown,
-  Users, Vote, Trophy, Lock,
+  Navigation, ArrowLeftRight, ThumbsUp, ThumbsDown,
+  Users, Vote, Trophy, Lock, Shield,
 } from 'lucide-react'
 import PlacePicker, { type PickedPlace } from '../PlacePicker'
-import { generateItinerary, generateFromSelectedPlaces, suggestDayAdditions, addNewPlacesToExistingPlan } from '../../services/aiService'
-import type { AIPlaceChange, AIStop, AIDay, SelectedPlaceInput } from '../../services/aiService'
+import { generateItinerary, generateFromSelectedPlaces, addNewPlacesToExistingPlan } from '../../services/aiService'
+import type { AIPlaceChange, AIStop, AIDay, AIStopBackup, SelectedPlaceInput } from '../../services/aiService'
 import type { Trip, TripDetail, PlaceItem, PlaceCategory, TripArrival } from '../../types'
 import type { TripProposal, ProposeInput } from '../../hooks/useTripData'
 
@@ -93,10 +93,6 @@ export default function ItineraryTab({
   const [placeChanges, setPlaceChanges] = useState<AIPlaceChange[]>([])
   const [showChanges, setShowChanges] = useState(true)
 
-  // Per-day AI gap-fill recommendations (posted to the group as neutral votes)
-  const [suggestingDay, setSuggestingDay] = useState<number | null>(null)
-  const [suggestError, setSuggestError] = useState('')
-
   // Ticking clock — drives the per-recommendation countdown + deadline resolution.
   const [now, setNow] = useState(() => Date.now())
 
@@ -119,7 +115,10 @@ export default function ItineraryTab({
   // Common pool = day 0 proposals (no day assigned). Before a plan exists,
   // every proposal is a candidate regardless of day.
   const groupPicks = hasPlan ? proposals.filter(p => p.day === 0) : proposals
-  const dayProposals = (day: number) => proposals.filter(p => p.day === day && day > 0)
+  // day-scoped regular AI suggestions (not backups)
+  const dayProposals = (day: number) => proposals.filter(p => p.day === day && day > 0 && p.source !== 'backup')
+  // pre-generated backup alternatives for a day (shown in separate section)
+  const dayBackups = (day: number) => proposals.filter(p => p.day === day && day > 0 && p.source === 'backup')
 
   const winningCount = proposals.filter(p => p.status === 'winning').length
   const tieCount = proposals.filter(p => p.status === 'tie').length
@@ -199,9 +198,8 @@ export default function ItineraryTab({
       onReplacePlaces(places, { aiTips: itinerary.tips, dayTitles, arrival: itinerary.arrival })
       setSelectedView(1)
       setShowTips(true)
-      // Both generation paths converge to the same post-plan state: clear any
-      // leftover pre-plan group picks so the downstream flow is identical.
-      onClearProposals().catch(() => {})
+      await onClearProposals()
+      proposeBackupsFromDays(itinerary.days)
     } catch (e) {
       setAiError(e instanceof Error ? e.message : 'Failed to generate itinerary.')
     } finally {
@@ -309,7 +307,8 @@ export default function ItineraryTab({
       }
       setSelectedView(1)
       setShowTips(true)
-      onClearProposals().catch(() => {})
+      await onClearProposals()
+      proposeBackupsFromDays(itinerary.days)
     } catch (e) {
       setAiError(e instanceof Error ? e.message : 'Failed to generate itinerary.')
     } finally {
@@ -349,54 +348,40 @@ export default function ItineraryTab({
 
   const dayMeta = detail.dayTitles?.[selectedDay]
 
-  // ── Per-day AI gap-fill recommendations ───────────────────────────────────
-  const loadDaySuggestions = async () => {
-    setSuggestingDay(selectedDay)
-    setSuggestError('')
-    try {
-      const list = await suggestDayAdditions({
-        destination: trip.destination,
-        country: trip.country,
-        day: selectedDay,
-        dayTitle: dayMeta?.title,
-        existingPlaces: dayPlaces.map(p => ({ name: p.name, category: p.category })),
-        interests: detail.preferences.interests,
-        budgetLevel: detail.preferences.budgetLevel,
-        count: 4,
-      })
-      const planNames = new Set(detail.places.map(p => p.name.toLowerCase().trim()))
-      const toPropose = list.filter(
-        s => s.name && !planNames.has(s.name.toLowerCase().trim()) && !isProposed(s.name),
-      )
-      await Promise.all(
-        toPropose.map(s =>
+  // ── Propose backup alternatives generated with the plan ───────────────────
+  const proposeBackupsFromDays = (days: AIDay[]) => {
+    const planNames = new Set(detail.places.map(p => p.name.toLowerCase().trim()))
+    for (const d of days) {
+      for (const stop of d.stops) {
+        if (!stop.backups?.length) continue
+        for (const backup of (stop.backups as AIStopBackup[])) {
+          if (!backup.name) continue
+          if (planNames.has(backup.name.toLowerCase().trim())) continue
+          const tipText = backup.tip
+            ? `[Alt for "${stop.name}" at ${stop.time ?? 'same time'}] ${backup.tip}`
+            : `Alternative for "${stop.name}" at ${stop.time ?? 'same time'}`
           onProposePlace({
-            name: s.name,
-            address: s.address || trip.destination,
-            category: s.category,
-            lat: s.lat,
-            lng: s.lng,
-            day: selectedDay,
-            tip: s.tip,
-            isFree: s.isFree,
-            cost: s.cost,
-            rating: s.rating,
-            reviewCount: s.reviewCount,
-            source: 'ai',
+            name: backup.name,
+            address: backup.address || trip.destination,
+            category: backup.category,
+            lat: backup.lat,
+            lng: backup.lng,
+            day: d.day,
+            tip: tipText,
+            isFree: backup.isFree,
+            cost: backup.cost,
+            rating: backup.rating,
+            reviewCount: backup.reviewCount,
+            source: 'backup',
             autoVote: false,
-          }).catch(() => {}),
-        ),
-      )
-    } catch (e) {
-      setSuggestError(e instanceof Error ? e.message : 'Failed to load suggestions.')
-    } finally {
-      setSuggestingDay(null)
+          }).catch(() => {})
+        }
+      }
     }
   }
 
-  // Tick every second while there are day-scoped recommendations being voted on,
-  // so the countdown updates and the deadline resolution fires on time.
-  const hasPendingTimers = proposals.some(p => p.day > 0)
+  // Tick every second while there are day-scoped NON-backup proposals being voted on.
+  const hasPendingTimers = proposals.some(p => p.day > 0 && p.source !== 'backup')
   useEffect(() => {
     if (!hasPendingTimers) return
     const id = setInterval(() => setNow(Date.now()), 1000)
@@ -414,6 +399,7 @@ export default function ItineraryTab({
     if (!isOwner) return
     proposals.forEach(p => {
       if (p.day <= 0) return
+      if (p.source === 'backup') return  // backups are handled manually by owner
       if (committingRef.current.has(p.id)) return
       const yes = p.yesVoters.length
       const no = p.noVoters.length
@@ -428,26 +414,32 @@ export default function ItineraryTab({
       if (!decision) return
 
       committingRef.current.add(p.id)
-      if (decision === 'add') {
-        onAddPlace({
-          name: p.name,
-          address: p.address || trip.destination,
-          photo: '',
-          lat: p.lat,
-          lng: p.lng,
-          category: p.category,
-          addedBy: 'Group vote',
-          day: p.day,
-          notes: '',
-          visited: false,
-          tip: p.tip,
-          isFree: p.isFree,
-          cost: p.cost,
-          rating: p.rating,
-          reviewCount: p.reviewCount,
-        })
-      }
-      onRemoveProposal(p.id).catch(() => committingRef.current.delete(p.id))
+      ;(async () => {
+        try {
+          if (decision === 'add') {
+            await Promise.resolve(onAddPlace({
+              name: p.name,
+              address: p.address || trip.destination,
+              photo: '',
+              lat: p.lat,
+              lng: p.lng,
+              category: p.category,
+              addedBy: 'Group vote',
+              day: p.day,
+              notes: '',
+              visited: false,
+              tip: p.tip,
+              isFree: p.isFree,
+              cost: p.cost,
+              rating: p.rating,
+              reviewCount: p.reviewCount,
+            }))
+          }
+          await onRemoveProposal(p.id)
+        } catch {
+          committingRef.current.delete(p.id)
+        }
+      })()
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proposals, isOwner, memberCount, now])
@@ -571,6 +563,130 @@ export default function ItineraryTab({
             )}
           </div>
         )}
+      </div>
+    )
+  }
+
+  // ── Backup alternative card (owner starts vote, no auto-resolve) ───────────
+  const handleAddBackup = async (p: TripProposal) => {
+    committingRef.current.add(p.id)
+    try {
+      await Promise.resolve(onAddPlace({
+        name: p.name,
+        address: p.address || trip.destination,
+        photo: '',
+        lat: p.lat,
+        lng: p.lng,
+        category: p.category,
+        addedBy: 'Backup vote',
+        day: p.day,
+        notes: '',
+        visited: false,
+        tip: p.tip?.replace(/^\[Alt for ".*?" at .*?\]\s*/, '') ?? '',
+        isFree: p.isFree,
+        cost: p.cost,
+        rating: p.rating,
+        reviewCount: p.reviewCount,
+      }))
+      await onRemoveProposal(p.id)
+    } catch {
+      committingRef.current.delete(p.id)
+    }
+  }
+
+  const renderBackupCard = (p: TripProposal) => {
+    const cfg = CATEGORY_CONFIG[p.category]
+    const isActive = p.yesVoters.length > 0 || p.noVoters.length > 0
+    const majorityYes = p.yesVoters.length > p.noVoters.length && p.yesVoters.length * 2 > memberCount
+    const isCommitting = committingRef.current.has(p.id)
+    const tipText = p.tip?.replace(/^\[Alt for ".*?" at .*?\]\s*/, '') ?? ''
+    const parentMatch = p.tip?.match(/^\[Alt for "(.*?)" at (.*?)\]/)
+    const parentName = parentMatch?.[1]
+    const parentTime = parentMatch?.[2]
+
+    return (
+      <div key={p.id} className={`p-3 rounded-xl border transition-all ${isActive ? 'border-orange-500/25 bg-orange-500/[0.04]' : 'border-white/[0.06] bg-white/[0.01] opacity-80'}`}>
+        {parentName && (
+          <p className="text-[10px] text-orange-300/70 mb-2 flex items-center gap-1.5 flex-wrap">
+            <Shield className="w-2.5 h-2.5 flex-shrink-0" />
+            <span>Backup for</span>
+            <span className="font-medium text-orange-300/90">"{parentName}"</span>
+            {parentTime && <><span>·</span><Clock className="w-2.5 h-2.5" /><span>{parentTime}</span></>}
+          </p>
+        )}
+        <div className="flex items-start gap-3">
+          <div className={`w-9 h-9 rounded-lg flex-shrink-0 bg-gradient-to-br ${PLACE_CATEGORY_BG[p.category]} flex items-center justify-center`}>
+            {cfg.emoji}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-sm font-medium text-white">{p.name}</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${cfg.color}`}>{cfg.label}</span>
+              {p.isFree
+                ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Free</span>
+                : p.cost && <span className="text-[10px] text-amber-300/70">{p.cost}</span>
+              }
+            </div>
+            {p.address && <p className="text-[11px] text-gray-500 truncate mt-0.5">{p.address}</p>}
+            {p.rating != null && (
+              <span className="text-[11px] text-amber-300">★ {p.rating.toFixed(1)}{p.reviewCount ? <span className="text-gray-600 text-[10px]"> ({p.reviewCount})</span> : null}</span>
+            )}
+            {tipText && <p className="text-[11px] text-gray-400 mt-1 leading-snug line-clamp-2">{tipText}</p>}
+          </div>
+          {(p.proposedBy === myIdentity || isOwner) && !isCommitting && (
+            <button onClick={() => onRemoveProposal(p.id).catch(() => {})} className="text-gray-600 hover:text-red-400 cursor-pointer transition-colors flex-shrink-0">
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="mt-3">
+          {!isActive ? (
+            isOwner ? (
+              <button
+                onClick={() => onVotePlace(p.id, true).catch(() => {})}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all border border-orange-500/30 bg-orange-500/10 hover:bg-orange-500/20 text-orange-300"
+              >
+                <Vote className="w-3 h-3" /> Start group vote
+              </button>
+            ) : (
+              <span className="text-[11px] text-gray-600 flex items-center gap-1">
+                <Lock className="w-2.5 h-2.5" /> Owner starts the vote if the main place is unavailable
+              </span>
+            )
+          ) : (
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => (p.myVote === true ? onRemoveVote(p.id) : onVotePlace(p.id, true)).catch(() => {})}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all border ${
+                  p.myVote === true
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-white/[0.03] text-gray-400 border-white/[0.08] hover:text-emerald-300 hover:border-emerald-500/30'
+                }`}
+              >
+                <ThumbsUp className="w-3 h-3" /> Yes · {p.yesVoters.length}
+              </button>
+              <button
+                onClick={() => (p.myVote === false ? onRemoveVote(p.id) : onVotePlace(p.id, false)).catch(() => {})}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all border ${
+                  p.myVote === false
+                    ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                    : 'bg-white/[0.03] text-gray-400 border-white/[0.08] hover:text-red-300 hover:border-red-500/30'
+                }`}
+              >
+                <ThumbsDown className="w-3 h-3" /> No · {p.noVoters.length}
+              </button>
+              {isOwner && majorityYes && !isCommitting && (
+                <button
+                  onClick={() => handleAddBackup(p)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300"
+                >
+                  <CheckCircle className="w-3 h-3" /> Add to plan
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     )
   }
@@ -1062,68 +1178,34 @@ export default function ItineraryTab({
               </div>
             )}
 
-            {/* ── Recommended for this day — vote yes/no (auto add/remove) ── */}
-            <div className="mt-6 p-4 glass rounded-2xl border border-amber-500/25">
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-400" />
-                  <span className="text-sm font-semibold text-white">Recommended for Day {selectedDay}</span>
-                  <span className="text-[11px] text-gray-500">vote yes/no — winners join the plan &amp; map, losers drop off</span>
+            {/* ── Backup alternatives — generated with the plan ── */}
+            {dayBackups(selectedDay).length > 0 && (
+              <div className="mt-6 p-4 glass rounded-2xl border border-orange-500/20">
+                <div className="flex items-center gap-2 mb-1">
+                  <Shield className="w-4 h-4 text-orange-400" />
+                  <span className="text-sm font-semibold text-white">Backup alternatives</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20">{dayBackups(selectedDay).length}</span>
                 </div>
-                <button
-                  onClick={loadDaySuggestions}
-                  disabled={suggestingDay === selectedDay}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 disabled:opacity-60 disabled:cursor-wait"
-                >
-                  {suggestingDay === selectedDay
-                    ? <><Loader className="w-3 h-3 animate-spin" /> Finding…</>
-                    : dayProposals(selectedDay).length > 0
-                      ? <><RefreshCw className="w-3 h-3" /> More suggestions</>
-                      : <><Sparkles className="w-3 h-3" /> Suggest places</>
-                  }
-                </button>
-              </div>
-
-              {suggestError && suggestingDay !== selectedDay && (
-                <div className="mt-3 flex items-start justify-between gap-3 px-3 py-2 bg-red-500/10 border border-red-500/25 rounded-xl text-red-300 text-xs">
-                  <span>{suggestError}</span>
-                  <button onClick={() => setSuggestError('')} className="text-red-400 hover:text-red-200 cursor-pointer flex-shrink-0">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-
-              <p className="text-[11px] text-gray-500 mt-2 flex items-center gap-1.5">
-                <Clock className="w-3 h-3 text-amber-400" />
-                {memberCount > 1
-                  ? 'Each pick has a 5-min vote. A clear majority decides instantly; when time runs out whoever leads wins (a tie drops it).'
-                  : 'Your vote decides: Yes adds it to the plan, No drops it. Undecided picks resolve when the 5-min timer ends.'}
-              </p>
-
-              {suggestingDay === selectedDay && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="rounded-xl border border-white/[0.05] p-3 animate-pulse">
-                      <div className="h-3 bg-white/[0.05] rounded w-2/3 mb-2" />
-                      <div className="h-2.5 bg-white/[0.03] rounded w-1/2 mb-3" />
-                      <div className="h-2.5 bg-white/[0.03] rounded w-full" />
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {dayProposals(selectedDay).length > 0 ? (
-                <div className="space-y-2.5 mt-3">
-                  {dayProposals(selectedDay).map(p => renderProposalCard(p, p.createdAt + VOTE_WINDOW_MS))}
-                </div>
-              ) : suggestingDay !== selectedDay && (
-                <p className="text-xs text-gray-500 mt-3">
-                  {dayPlaces.length === 0
-                    ? `Tap "Suggest places" — the AI proposes top-rated things to do and eat for Day ${selectedDay} and the group votes them in or out.`
-                    : `Tap "Suggest places" for more highly-rated activities and restaurants to round out Day ${selectedDay}.`}
+                <p className="text-[11px] text-gray-500 mb-3">
+                  AI-picked fallbacks for the same time slots — if a main place is closed or unavailable,{' '}
+                  {isOwner ? 'tap "Start group vote" to let everyone vote on the swap.' : 'the organizer can start a vote to swap one in.'}
                 </p>
-              )}
-            </div>
+                <div className="space-y-3">
+                  {dayBackups(selectedDay).map(p => renderBackupCard(p))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Day-scoped vote suggestions (from notifications/manual propose) ── */}
+            {dayProposals(selectedDay).length > 0 && (
+              <div className="mt-4 space-y-2.5">
+                <p className="text-[11px] text-gray-500 flex items-center gap-1.5">
+                  <Vote className="w-3 h-3 text-indigo-400" />
+                  Additional suggestions for Day {selectedDay} — 5-min group vote
+                </p>
+                {dayProposals(selectedDay).map(p => renderProposalCard(p, p.createdAt + VOTE_WINDOW_MS))}
+              </div>
+            )}
           </>
         )}
           </>

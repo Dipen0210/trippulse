@@ -12,6 +12,21 @@ export interface AIPlaceChange {
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
 const MODEL = 'gpt-4o'
 
+export interface AIStopBackup {
+  name: string
+  category: PlaceCategory
+  address: string
+  lat?: number
+  lng?: number
+  time: string
+  duration: string
+  tip: string
+  isFree?: boolean
+  cost?: string
+  rating?: number
+  reviewCount?: string
+}
+
 export interface AIStop {
   name: string
   category: PlaceCategory
@@ -28,6 +43,7 @@ export interface AIStop {
   bookingNote?: string
   bookingUrl?: string
   transportToNext?: TransportHop
+  backups?: AIStopBackup[]  // 1-2 nearby alternatives for same time slot
 }
 
 export interface AIDay {
@@ -257,6 +273,14 @@ For every stop EXCEPT the last of each day, add "transportToNext":
 **Per-day warning:**
 Each day gets a "warning" — one actionable sentence covering closures, pricing surprises, or timing must-knows. e.g. "The Met is closed Tuesdays — plan Day 2 on any other day." or "9/11 Museum requires timed entry — book ahead."
 
+**Backup alternatives (REQUIRED for every stop):**
+For EVERY stop (except restaurants), add a "backups" array with 1–2 alternative places:
+- Same time slot and same category as the main stop
+- Nearby (5–15 min away), genuinely worth visiting, high quality
+- These are second-priority places that couldn't fit due to time clashes or geographic clustering — not filler
+- Include: name, category, address, lat, lng, time (same as main), duration, tip, isFree, cost, rating, reviewCount
+- Do NOT include transportToNext or bookingNote/bookingUrl in backups
+
 **Trip-wide tips (5–7 entries):**
 - Book NOW (months in advance, sells out): what + how
 - Book a few days before: what + how
@@ -294,7 +318,22 @@ OUTPUT — return ONLY valid JSON, no markdown fences, no commentary:
             "distance": "1.2 mi",
             "duration": "8 min",
             "detail": "Take the downtown 4/5/6 from 86 St to 42 St–Grand Central (4 stops)"
-          }
+          },
+          "backups": [
+            {
+              "name": "Nearby Alternative",
+              "category": "attraction",
+              "address": "456 Street, Neighborhood",
+              "lat": 40.7600,
+              "lng": -73.9800,
+              "time": "9:00 AM",
+              "duration": "1–1.5 hrs",
+              "tip": "Why this is a great fallback option.",
+              "isFree": true,
+              "rating": 4.5,
+              "reviewCount": "3,200"
+            }
+          ]
         },
         {
           "name": "Local Restaurant Name",
@@ -474,6 +513,9 @@ For every stop except the last of each day, add "transportToNext":
 
 **Per-day warning:** Each day gets a "warning" — one actionable sentence about closures, pricing, or timing.
 
+**Backup alternatives (REQUIRED for every non-restaurant stop):**
+For EVERY attraction/activity stop, add a "backups" array with 1–2 nearby alternative places at the same time slot — second-priority options that couldn't fit due to time clashes. Include: name, category, address, lat, lng, time (same as main), duration, tip, isFree, cost, rating, reviewCount. No transportToNext or bookingNote in backups.
+
 **Trip-wide tips (5–7 entries):** Book-ahead warnings, transit passes, food tips, stay tip.
 ${p.origin ? `
 **Getting there:** Search real transport options from ${p.origin} → ${p.destination}, list all viable modes with duration, cost, booking URL.` : ''}
@@ -507,7 +549,22 @@ OUTPUT — return ONLY valid JSON, no markdown fences, no commentary:
             "distance": "0.4 mi",
             "duration": "8 min",
             "detail": "Head south on Main St"
-          }
+          },
+          "backups": [
+            {
+              "name": "Nearby Alternative",
+              "category": "attraction",
+              "address": "456 Street, Neighborhood",
+              "lat": 0.0000,
+              "lng": 0.0000,
+              "time": "9:00 AM",
+              "duration": "1–1.5 hrs",
+              "tip": "Why this is a great fallback.",
+              "isFree": true,
+              "rating": 4.5,
+              "reviewCount": "2,100"
+            }
+          ]
         }
       ]
     }
@@ -716,6 +773,23 @@ function normalizeWithChanges(raw: unknown, totalDays: number): AIItinerary {
   return { ...base, changes: changes.length > 0 ? changes : undefined }
 }
 
+function parseBackup(b: Record<string, unknown>): AIStopBackup {
+  return {
+    name: String(b.name ?? '').trim(),
+    category: coerceCategory(b.category),
+    address: String(b.address ?? ''),
+    lat: typeof b.lat === 'number' ? b.lat : undefined,
+    lng: typeof b.lng === 'number' ? b.lng : undefined,
+    time: String(b.time ?? ''),
+    duration: String(b.duration ?? ''),
+    tip: String(b.tip ?? ''),
+    isFree: b.isFree === true,
+    cost: b.cost ? String(b.cost) : undefined,
+    rating: typeof b.rating === 'number' ? b.rating : undefined,
+    reviewCount: b.reviewCount ? String(b.reviewCount) : undefined,
+  }
+}
+
 function normalize(raw: unknown, totalDays: number): AIItinerary {
   const obj = (raw ?? {}) as Record<string, unknown>
   const rawDays = Array.isArray(obj.days) ? obj.days : []
@@ -735,6 +809,13 @@ function normalize(raw: unknown, totalDays: number): AIItinerary {
           }
         : undefined
 
+      const rawBackups = Array.isArray(stop.backups) ? stop.backups : []
+      const backups: AIStopBackup[] = rawBackups
+        .filter((b): b is Record<string, unknown> => !!b && typeof b === 'object')
+        .map(parseBackup)
+        .filter(b => b.name)
+        .slice(0, 2)
+
       return {
         name: String(stop.name ?? 'Unnamed stop'),
         category: coerceCategory(stop.category),
@@ -751,6 +832,7 @@ function normalize(raw: unknown, totalDays: number): AIItinerary {
         bookingNote: stop.bookingNote ? String(stop.bookingNote) : undefined,
         bookingUrl: stop.bookingUrl ? String(stop.bookingUrl) : undefined,
         transportToNext,
+        backups: backups.length > 0 ? backups : undefined,
       }
     })
 
