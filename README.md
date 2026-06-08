@@ -2,7 +2,7 @@
 
 **[Live Demo →](https://trippulse.vercel.app)** &nbsp;|&nbsp; Built for the [SpacetimeDB](https://spacetimedb.com) Hackathon
 
-> 🏆 **Selected as a Top 10 Team** in the SpacetimeDB Hackathon — out of 71 teams and 125+ participants, and presented a live demo to the judges.
+> 🏆 **Selected as a Top 10 Team** in the SpacetimeDB Hackathon — out of 71 teams and 150+ participants, and presented a live demo to the judges.
 
 **[Watch Demo Video →](https://www.loom.com/share/e7b891daa2a5492ab4c41b0e3899ac2f)**
 
